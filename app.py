@@ -34,8 +34,10 @@ TEXTS = {
         "data_empty": "所选日期范围内没有足够的数据，请调整开始和结束日期。",
         
         # 回测相关文案
-        "buy_score_threshold": "买入触发分数阈值 (>)",
-        "sell_score_threshold": "卖出触发分数阈值 (<)",
+        "buy_cond_label": "买入条件类型",
+        "sell_cond_label": "卖出条件类型",
+        "buy_score_threshold": "买入触发分数阈值",
+        "sell_score_threshold": "卖出触发分数阈值",
         "buy_pct": "买入总资产比例 (%)",
         "sell_pct": "卖出总资产比例 (%)",
         "initial_capital": "初始总资产 (USD)",
@@ -115,8 +117,10 @@ TEXTS = {
         ),
         
         # 回测相关文案
-        "buy_score_threshold": "買いシグナル基準スコア (>)",
-        "sell_score_threshold": "売りシグナル基準スコア (<)",
+        "buy_cond_label": "買い条件の種類",
+        "sell_cond_label": "売り条件の種類",
+        "buy_score_threshold": "買いシグナル基準スコア",
+        "sell_score_threshold": "売りシグナル基準スコア",
         "buy_pct": "総資産に対する買い割合 (%)",
         "sell_pct": "総資産に対する売り割合 (%)",
         "initial_capital": "初期総資産 (USD)",
@@ -205,12 +209,17 @@ if start_date >= end_date:
 # ----------------- 侧边栏：回测策略控制参数 -----------------
 st.sidebar.markdown("---")
 st.sidebar.header(t["backtest_header"])
+
+buy_op = st.sidebar.selectbox(t["buy_cond_label"], [">", "<", ">=", "<=", "=="], index=0)
 buy_score_thresh = st.sidebar.number_input(
     t["buy_score_threshold"], value=0, step=1
 )
+
+sell_op = st.sidebar.selectbox(t["sell_cond_label"], ["<", ">", "<=", ">=", "=="], index=0)
 sell_score_thresh = st.sidebar.number_input(
     t["sell_score_threshold"], value=0, step=1
 )
+
 buy_pct_input = (
     st.sidebar.number_input(t["buy_pct"], value=1.0, min_value=0.1, max_value=100.0, step=0.5)
     / 100.0
@@ -334,6 +343,20 @@ if df.empty:
 
 
 # ----------------- 3. 回测引擎模拟计算 -----------------
+def check_condition(score, op, thresh):
+  if op == ">":
+    return score > thresh
+  elif op == "<":
+    return score < thresh
+  elif op == ">=":
+    return score >= thresh
+  elif op == "<=":
+    return score <= thresh
+  elif op == "==":
+    return score == thresh
+  return False
+
+
 cash = initial_capital
 shares = 0.0
 portfolio_values = []
@@ -352,8 +375,8 @@ for i in range(len(df)):
   action_type = None
   trade_shares = 0.0
 
-  # 规则判断：分数大于买入阈值
-  if score_i > buy_score_thresh:
+  # 规则判断：买入条件
+  if check_condition(score_i, buy_op, buy_score_thresh):
     target_buy_amount = (cash + shares * close_price) * buy_pct_input
     if cash >= target_buy_amount and target_buy_amount > 0:
       trade_shares = target_buy_amount / close_price
@@ -367,8 +390,8 @@ for i in range(len(df)):
       shares += trade_shares
       action_type = t["action_buy"]
 
-  # 规则判断：分数小于卖出阈值
-  elif score_i < sell_score_thresh:
+  # 规则判断：卖出条件
+  elif check_condition(score_i, sell_op, sell_score_thresh):
     if shares > 0:
       target_sell_amount = (cash + shares * close_price) * sell_pct_input
       current_holding_value = shares * close_price
