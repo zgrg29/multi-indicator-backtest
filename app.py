@@ -2,6 +2,7 @@ import datetime
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 import yfinance as yf
 
@@ -38,6 +39,9 @@ TEXTS = {
         "sell_pct": "卖出总资产比例 (%)",
         "initial_capital": "初始总资产 (USD)",
         "bt_sub": "📈 多资产策略历史回测表现与资产净值走势",
+        "allocation_sub": "📊 各资产与现金持仓占比变化 (堆叠面积图)",
+        "allocation_yaxis": "持仓占比 (%)",
+        "cash_name": "现金 (Cash)",
         "bt_metrics_title": "📊 回测绩效综合面板",
         "final_asset": "最终总资产",
         "total_return": "策略总收益率",
@@ -84,8 +88,11 @@ TEXTS = {
         "sell_pct": "総資産に対する売り割合 (%)",
         "initial_capital": "初期総資産 (USD)",
         "bt_sub": "📈 複数資産戦略バックテスト実績と資産推移",
+        "allocation_sub": "📊 各資産・現金ポートフォリオ構成比率の推移 (積み上げ面積グラフ)",
+        "allocation_yaxis": "保有割合 (%)",
+        "cash_name": "現金 (Cash)",
         "bt_metrics_title": "📊 バックテストパフォーマンス総合パネル",
-        "final_asset": "最終総资产",
+        "final_asset": "最終総資産",
         "total_return": "戦略総リターン",
         "bh_return": "等権限ベンチマーク総リターン",
         "max_drawdown": "最大ドローダウン",
@@ -167,7 +174,6 @@ initial_capital = st.sidebar.number_input(
 def load_and_calculate_multi_data(ticker_list, start, end):
   fetch_start = pd.to_datetime(start) - pd.Timedelta(days=350)
   data_dict = {}
-  score_dict = {}
 
   for sym in ticker_list:
     df = yf.download(
@@ -291,6 +297,7 @@ shares_dict = {sym: 0.0 for sym in valid_tickers}
 
 portfolio_values = []
 asset_component_values = {sym: [] for sym in valid_tickers}
+cash_component_values = []
 trade_logs = []
 
 for date_i in common_index:
@@ -372,10 +379,14 @@ for date_i in common_index:
 
   daily_total_asset = cash + final_holding_val_today
   portfolio_values.append(daily_total_asset)
+  cash_component_values.append(cash)
 
 # 构造回测结果DataFrame
 bt_df = pd.DataFrame(index=common_index)
 bt_df["Portfolio_Value"] = portfolio_values
+bt_df["Cash"] = cash_component_values
+for sym in valid_tickers:
+  bt_df[sym] = asset_component_values[sym]
 
 # 计算等权基准：将初始资金平均分配给所有有效标的并全程持有
 benchmark_initial_per_asset = initial_capital / len(valid_tickers)
@@ -434,13 +445,63 @@ for idx, sym in enumerate(valid_tickers):
   )
 
 fig_bt.update_layout(
-    height=500,
+    height=420,
     margin=dict(l=20, r=20, t=30, b=20),
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     template="plotly_white",
     yaxis_title="资产价值 (USD)",
 )
 st.plotly_chart(fig_bt, use_container_width=True)
+
+
+# ----------------- 新增：各资产及现金持仓百分比堆叠面积图 -----------------
+st.subheader(t["allocation_sub"])
+
+# 计算各资产及现金占总资产的百分比 (%)
+allocation_df = pd.DataFrame(index=bt_df.index)
+for sym in valid_tickers:
+  allocation_df[sym] = (bt_df[sym] / bt_df["Portfolio_Value"]) * 100
+allocation_df[t["cash_name"]] = (bt_df["Cash"] / bt_df["Portfolio_Value"]) * 100
+
+fig_alloc = go.Figure()
+
+# 为每个标的资产和现金添加堆叠面积图，并赋予统一且对应的颜色
+for idx, sym in enumerate(valid_tickers):
+  fig_alloc.add_trace(
+      go.Scatter(
+          x=allocation_df.index,
+          y=allocation_df[sym],
+          name=sym,
+          mode="lines",
+          stackgroup="one",
+          line=dict(width=0.5, color=color_palette[idx % len(color_palette)]),
+          fillcolor=color_palette[idx % len(color_palette)],
+      )
+  )
+
+# 现金颜色用沉稳的灰色或指定色
+cash_color = "#7f7f7f"
+fig_alloc.add_trace(
+    go.Scatter(
+        x=allocation_df.index,
+        y=allocation_df[t["cash_name"]],
+        name=t["cash_name"],
+        mode="lines",
+        stackgroup="one",
+        line=dict(width=0.5, color=cash_color),
+        fillcolor=cash_color,
+    )
+)
+
+fig_alloc.update_layout(
+    height=380,
+    margin=dict(l=20, r=20, t=30, b=20),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    template="plotly_white",
+    yaxis=dict(title=t["allocation_yaxis"], range=[0, 100]),
+)
+st.plotly_chart(fig_alloc, use_container_width=True)
+
 
 # 绩效指标综合面板
 st.markdown(f"### {t['bt_metrics_title']}")
