@@ -598,4 +598,3 @@ st.info(
         int_total_net=int(total_net),
     )
 )
-```eof
