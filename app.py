@@ -146,14 +146,15 @@ if start_date >= end_date:
 st.sidebar.markdown("---")
 st.sidebar.header(t["backtest_header"])
 
-buy_op = st.sidebar.selectbox(t["buy_cond_label"], [">", "<", ">=", "<=", "=="], index=0)
+# 默认买入条件改为 >= 0，卖出条件改为 <= -12
+buy_op = st.sidebar.selectbox(t["buy_cond_label"], [">=", ">", "<", "<=", "=="], index=0)
 buy_score_thresh = st.sidebar.number_input(
     t["buy_score_threshold"], value=0, step=1
 )
 
-sell_op = st.sidebar.selectbox(t["sell_cond_label"], ["<", ">", "<=", ">=", "=="], index=0)
+sell_op = st.sidebar.selectbox(t["sell_cond_label"], ["<=", "<", ">", ">=", "=="], index=0)
 sell_score_thresh = st.sidebar.number_input(
-    t["sell_score_threshold"], value=0, step=1
+    t["sell_score_threshold"], value=-12, step=1
 )
 
 buy_pct_input = (
@@ -304,6 +305,7 @@ for date_i in common_index:
   # 1. 计算当日总资产和各项市值
   current_holdings_value = 0.0
   prices_today = {}
+  scores_today = {}
   for sym in valid_tickers:
     p = data_dict[sym].loc[date_i, "Close"]
     if isinstance(p, pd.Series):
@@ -311,35 +313,19 @@ for date_i in common_index:
     prices_today[sym] = p
     current_holdings_value += shares_dict[sym] * p
 
-  total_asset = cash + current_holdings_value
-
-  # 2. 遍历每个资产检查买卖条件并独立交易
-  for sym in valid_tickers:
     score_i = data_dict[sym].loc[date_i, "Net_Score"]
     if isinstance(score_i, pd.Series):
       score_i = score_i.item()
+    scores_today[sym] = score_i
+
+  total_asset = cash + current_holdings_value
+
+  # 2. 先处理卖出条件（清仓或部分卖出不受买入资金先后顺序影响）
+  for sym in valid_tickers:
+    score_i = scores_today[sym]
     p = prices_today[sym]
 
-    action_type = None
-    trade_shares = 0.0
-
-    # 规则判断：买入条件
-    if check_condition(score_i, buy_op, buy_score_thresh):
-      target_buy_amount = total_asset * buy_pct_input
-      if cash >= target_buy_amount and target_buy_amount > 0:
-        trade_shares = target_buy_amount / p
-        cash -= target_buy_amount
-        shares_dict[sym] += trade_shares
-        action_type = t["action_buy"]
-      elif cash > 0 and cash < target_buy_amount:
-        trade_shares = cash / p
-        target_buy_amount = cash
-        cash = 0.0
-        shares_dict[sym] += trade_shares
-        action_type = t["action_buy"]
-
-    # 规则判断：卖出条件
-    elif check_condition(score_i, sell_op, sell_score_thresh):
+    if check_condition(score_i, sell_op, sell_score_thresh):
       if shares_dict[sym] > 0:
         holding_val_sym = shares_dict[sym] * p
         target_sell_amount = total_asset * sell_pct_input
@@ -355,8 +341,49 @@ for date_i in common_index:
           cash += target_sell_amount
           action_type = t["action_sell"]
 
-    if action_type is not None:
-      # 重新计算交易后的市值
+        # 更新实时总资产以便记录
+        updated_holding_val = shares_dict[sym] * p
+        updated_total_asset = cash + sum(shares_dict[s] * prices_today[s] for s in valid_tickers)
+        trade_logs.append({
+            "Date": date_i.strftime("%Y-%m-%d"),
+            "Ticker": sym,
+            "Action": action_type,
+            "Price": round(p, 2),
+            "Shares": round(trade_shares, 4),
+            "Cash": round(cash, 2),
+            "HoldingsValue": round(updated_holding_val, 2),
+            "TotalAsset": round(updated_total_asset, 2),
+        })
+
+  # 3. 处理买入条件：筛选满足买入条件的资产，并按净得分从高到低排序（分数相同保持原有相对顺序或相同权重）
+  buy_candidates = []
+  for sym in valid_tickers:
+    if check_condition(scores_today[sym], buy_op, buy_score_thresh):
+      buy_candidates.append((sym, scores_today[sym]))
+
+  if buy_candidates:
+    # 按照分数从高到低排序 (score降序)
+    buy_candidates.sort(key=lambda x: x[1], reverse=True)
+
+    for sym, score_i in buy_candidates:
+      p = prices_today[sym]
+      target_buy_amount = total_asset * buy_pct_input
+
+      if cash >= target_buy_amount and target_buy_amount > 0:
+        trade_shares = target_buy_amount / p
+        cash -= target_buy_amount
+        shares_dict[sym] += trade_shares
+        action_type = t["action_buy"]
+      elif cash > 0 and cash < target_buy_amount:
+        trade_shares = cash / p
+        target_buy_amount = cash
+        cash = 0.0
+        shares_dict[sym] += trade_shares
+        action_type = t["action_buy"]
+      else:
+        # 没有足够现金则跳过
+        continue
+
       updated_holding_val = shares_dict[sym] * p
       updated_total_asset = cash + sum(shares_dict[s] * prices_today[s] for s in valid_tickers)
       trade_logs.append({
@@ -370,7 +397,7 @@ for date_i in common_index:
           "TotalAsset": round(updated_total_asset, 2),
       })
 
-  # 3. 记录当日结束后的总资产及各资产市值
+  # 4. 记录当日结束后的总资产及各资产市值
   final_holding_val_today = 0.0
   for sym in valid_tickers:
     val_sym = shares_dict[sym] * prices_today[sym]
@@ -454,7 +481,7 @@ fig_bt.update_layout(
 st.plotly_chart(fig_bt, use_container_width=True)
 
 
-# ----------------- 新增：各资产及现金持仓百分比堆叠面积图 -----------------
+# ----------------- 各资产及现金持仓百分比堆叠面积图 -----------------
 st.subheader(t["allocation_sub"])
 
 # 计算各资产及现金占总资产的百分比 (%)
@@ -479,7 +506,7 @@ for idx, sym in enumerate(valid_tickers):
       )
   )
 
-# 现金颜色用沉稳的灰色或指定色
+# 现金颜色用沉稳的灰色
 cash_color = "#7f7f7f"
 fig_alloc.add_trace(
     go.Scatter(
