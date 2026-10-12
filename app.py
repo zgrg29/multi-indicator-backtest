@@ -142,14 +142,13 @@ if start_date >= end_date:
   st.sidebar.error(t["date_error"])
   st.stop()
 
-# ----------------- 侧边栏：回测策略控制参数 -----------------
+# ----------------- 侧边栏：回测策略控制参数（更新默认值） -----------------
 st.sidebar.markdown("---")
 st.sidebar.header(t["backtest_header"])
 
-# 默认买入条件改为 >= 0，卖出条件改为 <= -12
 buy_op = st.sidebar.selectbox(t["buy_cond_label"], [">=", ">", "<", "<=", "=="], index=0)
 buy_score_thresh = st.sidebar.number_input(
-    t["buy_score_threshold"], value=0, step=1
+    t["buy_score_threshold"], value=8, step=1
 )
 
 sell_op = st.sidebar.selectbox(t["sell_cond_label"], ["<=", "<", ">", ">=", "=="], index=0)
@@ -158,15 +157,15 @@ sell_score_thresh = st.sidebar.number_input(
 )
 
 buy_pct_input = (
-    st.sidebar.number_input(t["buy_pct"], value=1.0, min_value=0.1, max_value=100.0, step=0.5)
+    st.sidebar.number_input(t["buy_pct"], value=0.10, min_value=0.01, max_value=100.0, step=0.05, format="%.2f")
     / 100.0
 )
 sell_pct_input = (
-    st.sidebar.number_input(t["sell_pct"], value=1.0, min_value=0.1, max_value=100.0, step=0.5)
+    st.sidebar.number_input(t["sell_pct"], value=0.50, min_value=0.01, max_value=100.0, step=0.05, format="%.2f")
     / 100.0
 )
 initial_capital = st.sidebar.number_input(
-    t["initial_capital"], value=1_000_000.0, min_value=1000.0, step=10_000.0
+    t["initial_capital"], value=1_000_000.0, min_value=1000.0, step=10_000.0, format="%.2f"
 )
 
 
@@ -341,7 +340,6 @@ for date_i in common_index:
           cash += target_sell_amount
           action_type = t["action_sell"]
 
-        # 更新实时总资产以便记录
         updated_holding_val = shares_dict[sym] * p
         updated_total_asset = cash + sum(shares_dict[s] * prices_today[s] for s in valid_tickers)
         trade_logs.append({
@@ -355,14 +353,13 @@ for date_i in common_index:
             "TotalAsset": round(updated_total_asset, 2),
         })
 
-  # 3. 处理买入条件：筛选满足买入条件的资产，并按净得分从高到低排序（分数相同保持原有相对顺序或相同权重）
+  # 3. 处理买入条件：筛选满足买入条件的资产，并按净得分从高到低排序优先买入
   buy_candidates = []
   for sym in valid_tickers:
     if check_condition(scores_today[sym], buy_op, buy_score_thresh):
       buy_candidates.append((sym, scores_today[sym]))
 
   if buy_candidates:
-    # 按照分数从高到低排序 (score降序)
     buy_candidates.sort(key=lambda x: x[1], reverse=True)
 
     for sym, score_i in buy_candidates:
@@ -381,7 +378,6 @@ for date_i in common_index:
         shares_dict[sym] += trade_shares
         action_type = t["action_buy"]
       else:
-        # 没有足够现金则跳过
         continue
 
       updated_holding_val = shares_dict[sym] * p
@@ -484,7 +480,6 @@ st.plotly_chart(fig_bt, use_container_width=True)
 # ----------------- 各资产及现金持仓百分比堆叠面积图 -----------------
 st.subheader(t["allocation_sub"])
 
-# 计算各资产及现金占总资产的百分比 (%)
 allocation_df = pd.DataFrame(index=bt_df.index)
 for sym in valid_tickers:
   allocation_df[sym] = (bt_df[sym] / bt_df["Portfolio_Value"]) * 100
@@ -492,7 +487,6 @@ allocation_df[t["cash_name"]] = (bt_df["Cash"] / bt_df["Portfolio_Value"]) * 100
 
 fig_alloc = go.Figure()
 
-# 为每个标的资产和现金添加堆叠面积图，并赋予统一且对应的颜色
 for idx, sym in enumerate(valid_tickers):
   fig_alloc.add_trace(
       go.Scatter(
@@ -506,7 +500,6 @@ for idx, sym in enumerate(valid_tickers):
       )
   )
 
-# 现金颜色用沉稳的灰色
 cash_color = "#7f7f7f"
 fig_alloc.add_trace(
     go.Scatter(
@@ -537,7 +530,6 @@ final_benchmark_val = bt_df["Benchmark_Value"].iloc[-1]
 strategy_return = (final_portfolio_val / initial_capital - 1) * 100
 benchmark_return = (final_benchmark_val / initial_capital - 1) * 100
 
-# 最大回撤计算
 rolling_max = bt_df["Portfolio_Value"].cummax()
 drawdown = (bt_df["Portfolio_Value"] - rolling_max) / rolling_max * 100
 max_drawdown = drawdown.min()
